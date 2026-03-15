@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Entornos virtuales / conda
+.venv/
+env/
+venv/
+
+# Resultados de experimentos (archivos grandes, no van al repo)
+resultados/*.json
+!resultados/.gitkeep
+
+# Hugging Face cache descargado en runtime
+.cache/
+
+# Variables de entorno con credenciales
+.env
+.env.*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editores
+.vscode/
+.idea/
+*.swp

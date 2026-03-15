@@ -1,0 +1,9 @@
+# Pipeline de Tesis - Dependencias
+openai>=1.0
+datasets
+llmlingua
+transformers
+torch
+tqdm
+accelerate
+sentencepiece
