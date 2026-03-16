@@ -40,6 +40,66 @@ PROFILE_SETTINGS = {
     },
 }
 
+# ── Barrido de compresión ────────────────────────────────────────────────
+# Se interpreta como ratio de tokens objetivo de LLMLingua-2.
+COMPRESSION_RATES = [0.9, 0.7, 0.5, 0.3]
+
+# ── Datasets disponibles para el pipeline ────────────────────────────────
+# Nota: algunos repos pueden requerir login en Hugging Face o variar esquema.
+DATASET_REGISTRY = {
+    "jbb": {
+        "hf_name": "JailbreakBench/JBB-Behaviors",
+        "hf_config": "behaviors",
+        "split": "harmful",
+        "id_field": "Index",
+        "category_field": "Category",
+        "behavior_field": "Behavior",
+        "prompt_field": "Goal",
+    },
+    "advbench": {
+        "hf_name": "walledai/AdvBench",
+        "hf_config": None,
+        "split": "train",
+        "id_field": None,
+        "category_field": None,
+        "behavior_field": None,
+        "prompt_field": "prompt",
+    },
+    "securitylingua": {
+        "hf_name": "SecurityLingua/SecurityLingua",
+        "hf_config": None,
+        "split": "train",
+        "id_field": None,
+        "category_field": None,
+        "behavior_field": None,
+        "prompt_field": "prompt",
+    },
+    "compressionattack": {
+        "hf_name": "CompressionAttack/CompressionAttack",
+        "hf_config": None,
+        "split": "train",
+        "id_field": None,
+        "category_field": None,
+        "behavior_field": None,
+        "prompt_field": "prompt",
+    },
+    "partprompt": {
+        "hf_name": "PartPrompt/PartPrompt",
+        "hf_config": None,
+        "split": "train",
+        "id_field": None,
+        "category_field": None,
+        "behavior_field": None,
+        "prompt_field": "prompt",
+    },
+}
+
+ACTIVE_DATASETS = [
+    name.strip().lower()
+    for name in os.environ.get("ACTIVE_DATASETS", "jbb").split(",")
+    if name.strip()
+]
+
 
 def _resolve_profile(profile: str) -> str:
     profile = (profile or "PILOT").upper()

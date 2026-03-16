@@ -44,7 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline import config
 from pipeline.llm_client import LLMClient
 from pipeline.judge import JudgeLlamaGuard
-from pipeline.metrics import compute_metrics
+from pipeline.metrics import compute_metrics, compute_grouped_metrics
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -62,12 +62,12 @@ def init_compressor():
     return compressor
 
 
-def compress_prompt(compressor, text: str) -> dict:
+def compress_prompt(compressor, text: str, rate: float) -> dict:
     """Comprime un prompt y devuelve resultado + timing."""
     start = time.time()
     result = compressor.compress_prompt_llmlingua2(
         text,
-        rate=config.COMPRESSION_RATE,
+        rate=rate,
         force_tokens=config.FORCE_TOKENS,
     )
     latency = time.time() - start
@@ -80,6 +80,24 @@ def compress_prompt(compressor, text: str) -> dict:
     }
 
 
+def parse_csv_list(raw: str | None, cast=str) -> list:
+    if raw is None:
+        return []
+    return [cast(x.strip()) for x in raw.split(",") if x.strip()]
+
+
+def load_dataset_by_alias(alias: str):
+    spec = config.DATASET_REGISTRY.get(alias)
+    if spec is None:
+        raise ValueError(f"Dataset alias no soportado: {alias}")
+
+    if spec["hf_config"] is None:
+        ds = load_dataset(spec["hf_name"], split=spec["split"])
+    else:
+        ds = load_dataset(spec["hf_name"], spec["hf_config"], split=spec["split"])
+    return ds, spec
+
+
 # ── Experimento principal ────────────────────────────────────────────────
 
 def run_experiment(args):
@@ -89,8 +107,9 @@ def run_experiment(args):
     print(f"   Backend:         {config.BACKEND}")
     print(f"   Modelo LLM:      {config.LLM_MODEL}")
     print(f"   Modelo Judge:    {config.JUDGE_MODEL}")
-    print(f"   Compresión:      {config.COMPRESSION_RATE * 100:.0f}%")
-    print(f"   Muestras:        {args.num_samples}")
+    print(f"   Rates:           {', '.join(str(r) for r in args.rates)}")
+    print(f"   Datasets:        {', '.join(args.datasets)}")
+    print(f"   Muestras/dataset:{args.num_samples}")
     print(f"   Prompt Guard:    {'Sí' if args.use_prompt_guard else 'No'}")
     print()
 
@@ -110,12 +129,25 @@ def run_experiment(args):
     print()
 
     # 2 ── Dataset ────────────────────────────────────────────────────────
-    print("📦 Cargando JailbreakBench...")
-    dataset = load_dataset(
-        config.DATASET_NAME, config.DATASET_CONFIG, split=config.DATASET_SPLIT
-    )
-    num_samples = min(args.num_samples, len(dataset))
-    print(f"   ✔ {len(dataset)} ataques disponibles, usando {num_samples}")
+    datasets_loaded = {}
+    dataset_load_errors = []
+    print("📦 Cargando datasets...")
+    for alias in args.datasets:
+        try:
+            ds, spec = load_dataset_by_alias(alias)
+            num_samples = min(args.num_samples, len(ds))
+            datasets_loaded[alias] = {
+                "dataset": ds,
+                "spec": spec,
+                "num_samples": num_samples,
+            }
+            print(f"   ✔ {alias}: {len(ds)} filas, usando {num_samples}")
+        except Exception as e:
+            dataset_load_errors.append({"dataset": alias, "error": str(e)})
+            print(f"   ⚠ {alias}: no se pudo cargar ({e})")
+
+    if not datasets_loaded:
+        raise RuntimeError("No se pudo cargar ningún dataset.")
     print()
 
     # 3 ── Bucle principal ────────────────────────────────────────────────
@@ -123,74 +155,96 @@ def run_experiment(args):
     errors = []
 
     print("🔬 Ejecutando experimento...")
-    for i in tqdm(range(num_samples), desc="Procesando"):
-        item = dataset[i]
-        prompt_original = item["Goal"]
+    for dataset_alias, payload in datasets_loaded.items():
+        ds = payload["dataset"]
+        spec = payload["spec"]
+        n = payload["num_samples"]
 
-        entry = {
-            "id": item["Index"],
-            "categoria": item["Category"],
-            "comportamiento": item["Behavior"],
-            "prompt_original": prompt_original,
-        }
+        for rate in args.rates:
+            desc = f"{dataset_alias} @ rate={rate}"
+            for i in tqdm(range(n), desc=desc):
+                item = ds[i]
+                prompt_field = spec["prompt_field"]
+                prompt_original = item[prompt_field]
 
-        try:
-            # 3a ── Prompt Guard sobre original ───────────────────────────
-            if prompt_guard:
-                entry["prompt_guard_original"] = prompt_guard.detect(prompt_original)
-            else:
-                entry["prompt_guard_original"] = None
+                idx_field = spec["id_field"]
+                cat_field = spec["category_field"]
+                beh_field = spec["behavior_field"]
+                source_id = item[idx_field] if idx_field and idx_field in item else i
+                rate_tag = str(rate).replace(".", "p")
+                unique_id = f"{dataset_alias}__r{rate_tag}__i{i}__src{source_id}"
 
-            # 3b ── Compresión ────────────────────────────────────────────
-            comp = compress_prompt(compressor, prompt_original)
-            entry["prompt_comprimido"] = comp["compressed_prompt"]
-            entry["tokens_original"] = comp["tokens_original"]
-            entry["tokens_comprimidos"] = comp["tokens_compressed"]
-            entry["ratio_compresion"] = comp["ratio"]
-            entry["latency_compresion"] = round(comp["latency"], 4)
+                entry = {
+                    "dataset": dataset_alias,
+                    "compression_rate": rate,
+                    "id": unique_id,
+                    "source_id": source_id,
+                    "sample_index": i,
+                    "categoria": item[cat_field] if cat_field and cat_field in item else "N/A",
+                    "comportamiento": item[beh_field] if beh_field and beh_field in item else "N/A",
+                    "prompt_original": prompt_original,
+                }
 
-            # 3c ── Prompt Guard sobre comprimido ─────────────────────────
-            if prompt_guard:
-                entry["prompt_guard_compressed"] = prompt_guard.detect(
-                    comp["compressed_prompt"]
-                )
-            else:
-                entry["prompt_guard_compressed"] = None
+                try:
+                    if prompt_guard:
+                        entry["prompt_guard_original"] = prompt_guard.detect(prompt_original)
+                    else:
+                        entry["prompt_guard_original"] = None
 
-            # 3d ── LLM sin compresión ────────────────────────────────────
-            resp_sin = llm.generate(prompt_original)
-            entry["response_sin_compresion"] = resp_sin["response"]
-            entry["latency_sin_compresion"] = round(resp_sin["latency"], 4)
-            entry["tokens_llm_sin_compresion"] = resp_sin["tokens_completion"]
+                    comp = compress_prompt(compressor, prompt_original, rate)
+                    entry["prompt_comprimido"] = comp["compressed_prompt"]
+                    entry["tokens_original"] = comp["tokens_original"]
+                    entry["tokens_comprimidos"] = comp["tokens_compressed"]
+                    entry["ratio_compresion"] = comp["ratio"]
+                    entry["latency_compresion"] = round(comp["latency"], 4)
 
-            # 3e ── LLM con compresión ────────────────────────────────────
-            resp_con = llm.generate(comp["compressed_prompt"])
-            entry["response_con_compresion"] = resp_con["response"]
-            entry["latency_con_compresion"] = round(resp_con["latency"], 4)
-            entry["tokens_llm_con_compresion"] = resp_con["tokens_completion"]
+                    if prompt_guard:
+                        entry["prompt_guard_compressed"] = prompt_guard.detect(
+                            comp["compressed_prompt"]
+                        )
+                    else:
+                        entry["prompt_guard_compressed"] = None
 
-            # 3f ── Judge sin compresión ──────────────────────────────────
-            entry["judge_sin_compresion"] = judge.evaluate(
-                prompt_original, resp_sin["response"]
-            )
+                    resp_sin = llm.generate(prompt_original)
+                    entry["response_sin_compresion"] = resp_sin["response"]
+                    entry["latency_sin_compresion"] = round(resp_sin["latency"], 4)
+                    entry["tokens_llm_sin_compresion"] = resp_sin["tokens_completion"]
 
-            # 3g ── Judge con compresión ──────────────────────────────────
-            entry["judge_con_compresion"] = judge.evaluate(
-                comp["compressed_prompt"], resp_con["response"]
-            )
+                    resp_con = llm.generate(comp["compressed_prompt"])
+                    entry["response_con_compresion"] = resp_con["response"]
+                    entry["latency_con_compresion"] = round(resp_con["latency"], 4)
+                    entry["tokens_llm_con_compresion"] = resp_con["tokens_completion"]
 
-            results.append(entry)
+                    entry["judge_sin_compresion"] = judge.evaluate(
+                        prompt_original, resp_sin["response"]
+                    )
 
-        except Exception as e:
-            errors.append({"id": item["Index"], "error": str(e)})
-            tqdm.write(f"   ⚠ Error en muestra {item['Index']}: {e}")
+                    entry["judge_con_compresion"] = judge.evaluate(
+                        comp["compressed_prompt"], resp_con["response"]
+                    )
 
-        # Rate-limit para no saturar la API
-        time.sleep(args.delay)
+                    results.append(entry)
+
+                except Exception as e:
+                    errors.append(
+                        {
+                            "dataset": dataset_alias,
+                            "compression_rate": rate,
+                            "id": entry["id"],
+                            "error": str(e),
+                        }
+                    )
+                    tqdm.write(
+                        f"   ⚠ Error en {dataset_alias} muestra {entry['id']} (rate={rate}): {e}"
+                    )
+
+                time.sleep(args.delay)
 
     # 4 ── Métricas ───────────────────────────────────────────────────────
     print("\n📊 Calculando métricas...")
     summary = compute_metrics(results) if results else {}
+    by_dataset = compute_grouped_metrics(results, "dataset")
+    by_dataset_rate = compute_grouped_metrics(results, ["dataset", "compression_rate"])
 
     # 5 ── Guardar resultados ─────────────────────────────────────────────
     output = {
@@ -200,6 +254,8 @@ def run_experiment(args):
             "judge_model": config.JUDGE_MODEL,
             "compressor_model": config.COMPRESSOR_MODEL,
             "compression_rate": config.COMPRESSION_RATE,
+            "compression_rates": args.rates,
+            "datasets": args.datasets,
             "system_prompt": config.SYSTEM_PROMPT,
             "num_samples_requested": args.num_samples,
             "num_processed": len(results),
@@ -207,8 +263,11 @@ def run_experiment(args):
             "use_prompt_guard": args.use_prompt_guard,
         },
         "summary": summary,
+        "summary_by_dataset": by_dataset,
+        "summary_by_dataset_rate": by_dataset_rate,
         "results": results,
         "errors": errors,
+        "dataset_load_errors": dataset_load_errors,
     }
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -235,6 +294,16 @@ def run_experiment(args):
     print(f"  Tokens prom. original:     {summary.get('tokens_promedio_original', 0)}")
     print(f"  Tokens prom. comprimido:   {summary.get('tokens_promedio_comprimido', 0)}")
     print(f"  Ratio compresión prom.:    {summary.get('ratio_compresion_promedio', 0) * 100:.1f}%")
+    print(f"  McNemar p-value:           {summary.get('mcnemar_pvalue', 1.0)}")
+
+    if by_dataset:
+        print()
+        print("  ΔASR por dataset:")
+        for dataset_name, m in by_dataset.items():
+            print(
+                f"    - {dataset_name}: {m.get('delta_asr', 0) * 100:+.1f}% "
+                f"(p={m.get('mcnemar_pvalue', 1.0)})"
+            )
 
     if args.use_prompt_guard and "deteccion_prompt_guard_original" in summary:
         print()
@@ -284,6 +353,14 @@ def main():
         "--delay", type=float, default=None,
         help="Segundos entre llamadas al API (rate-limit, default: 1.0)",
     )
+    parser.add_argument(
+        "--datasets", type=str, default=None,
+        help="Lista CSV de datasets alias (e.g. jbb,advbench)",
+    )
+    parser.add_argument(
+        "--rates", type=str, default=None,
+        help="Lista CSV de rates de compresión (e.g. 0.9,0.7,0.5,0.3)",
+    )
     args = parser.parse_args()
 
     # Aplicar perfil antes de inicializar clientes/modelos.
@@ -299,6 +376,16 @@ def main():
 
     if args.delay is None:
         args.delay = selected["DELAY"]
+
+    if args.datasets is None:
+        args.datasets = config.ACTIVE_DATASETS
+    else:
+        args.datasets = parse_csv_list(args.datasets, cast=str)
+
+    if args.rates is None:
+        args.rates = config.COMPRESSION_RATES
+    else:
+        args.rates = parse_csv_list(args.rates, cast=float)
 
     # Precedencia: --no-prompt-guard > --use-prompt-guard > perfil
     if args.no_prompt_guard:
