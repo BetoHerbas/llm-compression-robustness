@@ -28,15 +28,18 @@ PROFILE_SETTINGS = {
         "NUM_SAMPLES": 10,
         "DELAY": 0.3,
         "USE_PROMPT_GUARD": False,
+        "QUANTIZE_4BIT": False,
     },
     "LAB": {
-        # Configuración final local para laboratorio.
+        # Configuración final para laboratorio (RTX 5060 8GB VRAM).
+        # Sequential loading: LLM y Judge se cargan/descargan por fases.
         "BACKEND": "local",
-        "LLM_MODEL": "Qwen/Qwen2.5-7B-Instruct",
-        "JUDGE_MODEL": "Qwen/Qwen2.5-3B-Instruct",
+        "LLM_MODEL": "meta-llama/Llama-3.1-8B-Instruct",
+        "JUDGE_MODEL": "meta-llama/Llama-Guard-3-8B",
         "NUM_SAMPLES": 100,
-        "DELAY": 1.0,
+        "DELAY": 0.5,
         "USE_PROMPT_GUARD": True,
+        "QUANTIZE_4BIT": True,
     },
 }
 
@@ -122,6 +125,9 @@ def get_profile_settings(profile: str | None = None) -> dict:
     base["USE_PROMPT_GUARD"] = os.environ.get(
         "USE_PROMPT_GUARD", str(base["USE_PROMPT_GUARD"])
     ).lower() in ("1", "true", "yes", "y")
+    base["QUANTIZE_4BIT"] = os.environ.get(
+        "QUANTIZE_4BIT", str(base.get("QUANTIZE_4BIT", False))
+    ).lower() in ("1", "true", "yes", "y")
     base["PROFILE"] = selected
     return base
 
@@ -137,6 +143,7 @@ def apply_profile(profile: str | None = None) -> dict:
     global NUM_SAMPLES
     global REQUEST_DELAY
     global DEFAULT_USE_PROMPT_GUARD
+    global QUANTIZE_4BIT
 
     PROFILE = selected["PROFILE"]
     BACKEND = selected["BACKEND"].lower()
@@ -145,6 +152,7 @@ def apply_profile(profile: str | None = None) -> dict:
     NUM_SAMPLES = selected["NUM_SAMPLES"]
     REQUEST_DELAY = selected["DELAY"]
     DEFAULT_USE_PROMPT_GUARD = selected["USE_PROMPT_GUARD"]
+    QUANTIZE_4BIT = selected["QUANTIZE_4BIT"]
     return selected
 
 # ── System prompt para el LLM principal ──────────────────────────────────
@@ -166,6 +174,7 @@ JUDGE_MODEL = ""
 NUM_SAMPLES = 0
 REQUEST_DELAY = 1.0
 DEFAULT_USE_PROMPT_GUARD = False
+QUANTIZE_4BIT = False
 
 # Inicializa defaults al importar el módulo
 apply_profile(PROFILE)

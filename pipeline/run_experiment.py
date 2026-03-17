@@ -3,37 +3,46 @@
 Pipeline de Tesis: Impacto de Compresión de Prompt en Ataques de Jailbreak
 ══════════════════════════════════════════════════════════════════════════
 
-Flujo:
-  Prompt original
-        │
-        ▼
-   [Opcional] Prompt Guard (detección)
-        │
-        ▼
-   LLMLingua-2  ──>  Prompt comprimido
-        │
-        ▼
-   Llama 4 Scout (LLM principal)
-        │
-        ▼
-   Llama Guard 3 (judge)
-        │
-        ▼
-   Métricas: ASR / detección / latencia / tokens
+Flujo (sequential loading — 2 fases para caber en 8 GB VRAM):
+
+  FASE 0 — Compresión + Prompt Guard (CPU)
+  ─────────────────────────────────────────
+   Para cada prompt:
+     [Opcional] Prompt Guard (detección, CPU)
+     LLMLingua-2  ──> Prompt comprimido (CPU)
+     [Opcional] Prompt Guard post-compresión (CPU)
+
+  FASE 1 — Generación LLM (GPU)
+  ──────────────────────────────
+   Cargar Llama 3.3 8B INT4 en GPU (~5 GB)
+   Para cada muestra:
+     Generar respuesta con prompt original
+     Generar respuesta con prompt comprimido
+   Descargar modelo, liberar GPU
+
+  FASE 2 — Juicio (GPU)
+  ──────────────────────
+   Cargar Llama Guard 3 8B INT4 en GPU (~5 GB)
+   Para cada muestra:
+     Juzgar respuesta original
+     Juzgar respuesta comprimida
+   Descargar modelo, liberar GPU
+
+  FASE 3 — Métricas y Reporte
 
 Uso:
-  export TOGETHER_API_KEY="tu-api-key"
-  python pipeline/run_experiment.py --num-samples 20
-  python pipeline/run_experiment.py --num-samples 100 --use-prompt-guard
+  python pipeline/run_experiment.py --profile lab --num-samples 100 --use-prompt-guard
 """
 import os
 import sys
+import gc
 import json
 import time
 import argparse
 from datetime import datetime
 from pathlib import Path
 
+import torch
 from tqdm import tqdm
 from datasets import load_dataset
 from llmlingua import PromptCompressor
@@ -50,8 +59,7 @@ from pipeline.metrics import compute_metrics, compute_grouped_metrics
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 def init_compressor():
-    """Inicializa LLMLingua-2 en CPU."""
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    """Inicializa LLMLingua-2 en CPU (no consume VRAM)."""
     print("   Cargando LLMLingua-2...")
     compressor = PromptCompressor(
         model_name=config.COMPRESSOR_MODEL,
@@ -102,22 +110,26 @@ def load_dataset_by_alias(alias: str):
 
 def run_experiment(args):
     active_profile = config.PROFILE
-    print("🚀 Iniciando Pipeline de Tesis")
+    print("🚀 Iniciando Pipeline de Tesis (Sequential Loading)")
     print(f"   Perfil:          {active_profile}")
     print(f"   Backend:         {config.BACKEND}")
     print(f"   Modelo LLM:      {config.LLM_MODEL}")
     print(f"   Modelo Judge:    {config.JUDGE_MODEL}")
+    print(f"   Cuantización:    {'INT4' if config.QUANTIZE_4BIT else 'FP16'}")
     print(f"   Rates:           {', '.join(str(r) for r in args.rates)}")
     print(f"   Datasets:        {', '.join(args.datasets)}")
     print(f"   Muestras/dataset:{args.num_samples}")
     print(f"   Prompt Guard:    {'Sí' if args.use_prompt_guard else 'No'}")
     print()
 
-    # 1 ── Componentes ────────────────────────────────────────────────────
-    print("📦 Inicializando componentes...")
+    # ═══════════════════════════════════════════════════════════════════════
+    # FASE 0 — Compresión + Prompt Guard (todo en CPU)
+    # ═══════════════════════════════════════════════════════════════════════
+    print("━" * 62)
+    print("  FASE 0: Compresión + Prompt Guard (CPU)")
+    print("━" * 62)
+
     compressor = init_compressor()
-    llm = LLMClient()
-    judge = JudgeLlamaGuard()
 
     prompt_guard = None
     if args.use_prompt_guard:
@@ -126,9 +138,7 @@ def run_experiment(args):
         prompt_guard = PromptGuard()
         print("   ✔ Prompt Guard listo")
 
-    print()
-
-    # 2 ── Dataset ────────────────────────────────────────────────────────
+    # Cargar datasets
     datasets_loaded = {}
     dataset_load_errors = []
     print("📦 Cargando datasets...")
@@ -150,18 +160,18 @@ def run_experiment(args):
         raise RuntimeError("No se pudo cargar ningún dataset.")
     print()
 
-    # 3 ── Bucle principal ────────────────────────────────────────────────
-    results = []
+    # Comprimir y detectar (todo en CPU, no usa VRAM)
+    entries = []
     errors = []
 
-    print("🔬 Ejecutando experimento...")
+    print("🔄 Comprimiendo prompts y ejecutando Prompt Guard...")
     for dataset_alias, payload in datasets_loaded.items():
         ds = payload["dataset"]
         spec = payload["spec"]
         n = payload["num_samples"]
 
         for rate in args.rates:
-            desc = f"{dataset_alias} @ rate={rate}"
+            desc = f"[Compresión] {dataset_alias} @ rate={rate}"
             for i in tqdm(range(n), desc=desc):
                 item = ds[i]
                 prompt_field = spec["prompt_field"]
@@ -205,43 +215,135 @@ def run_experiment(args):
                     else:
                         entry["prompt_guard_compressed"] = None
 
-                    resp_sin = llm.generate(prompt_original)
-                    entry["response_sin_compresion"] = resp_sin["response"]
-                    entry["latency_sin_compresion"] = round(resp_sin["latency"], 4)
-                    entry["tokens_llm_sin_compresion"] = resp_sin["tokens_completion"]
-
-                    resp_con = llm.generate(comp["compressed_prompt"])
-                    entry["response_con_compresion"] = resp_con["response"]
-                    entry["latency_con_compresion"] = round(resp_con["latency"], 4)
-                    entry["tokens_llm_con_compresion"] = resp_con["tokens_completion"]
-
-                    entry["judge_sin_compresion"] = judge.evaluate(
-                        prompt_original, resp_sin["response"]
-                    )
-
-                    entry["judge_con_compresion"] = judge.evaluate(
-                        comp["compressed_prompt"], resp_con["response"]
-                    )
-
-                    results.append(entry)
+                    entries.append(entry)
 
                 except Exception as e:
-                    errors.append(
-                        {
-                            "dataset": dataset_alias,
-                            "compression_rate": rate,
-                            "id": entry["id"],
-                            "error": str(e),
-                        }
-                    )
-                    tqdm.write(
-                        f"   ⚠ Error en {dataset_alias} muestra {entry['id']} (rate={rate}): {e}"
-                    )
+                    errors.append({
+                        "dataset": dataset_alias,
+                        "compression_rate": rate,
+                        "id": unique_id,
+                        "phase": "compression",
+                        "error": str(e),
+                    })
+                    tqdm.write(f"   ⚠ Error compresión {unique_id}: {e}")
 
-                time.sleep(args.delay)
+    # Liberar compresor y prompt guard de RAM
+    del compressor
+    if prompt_guard is not None:
+        del prompt_guard
+    gc.collect()
 
-    # 4 ── Métricas ───────────────────────────────────────────────────────
-    print("\n📊 Calculando métricas...")
+    print(f"\n   ✔ Fase 0 completa: {len(entries)} muestras comprimidas, {len(errors)} errores")
+    print()
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FASE 1 — Generación LLM (modelo en GPU)
+    # ═══════════════════════════════════════════════════════════════════════
+    print("━" * 62)
+    print("  FASE 1: Generación con LLM (GPU)")
+    print("━" * 62)
+    print(f"   Cargando {config.LLM_MODEL}...")
+    llm = LLMClient()
+    print(f"   ✔ LLM cargado en GPU")
+    print()
+
+    for entry in tqdm(entries, desc="[LLM] Generando respuestas"):
+        try:
+            resp_sin = llm.generate(entry["prompt_original"])
+            entry["response_sin_compresion"] = resp_sin["response"]
+            entry["latency_sin_compresion"] = round(resp_sin["latency"], 4)
+            entry["tokens_llm_sin_compresion"] = resp_sin["tokens_completion"]
+
+            resp_con = llm.generate(entry["prompt_comprimido"])
+            entry["response_con_compresion"] = resp_con["response"]
+            entry["latency_con_compresion"] = round(resp_con["latency"], 4)
+            entry["tokens_llm_con_compresion"] = resp_con["tokens_completion"]
+
+        except Exception as e:
+            errors.append({
+                "dataset": entry["dataset"],
+                "compression_rate": entry["compression_rate"],
+                "id": entry["id"],
+                "phase": "llm_generation",
+                "error": str(e),
+            })
+            tqdm.write(f"   ⚠ Error LLM {entry['id']}: {e}")
+            # Marcar para excluir del juicio
+            entry["_llm_error"] = True
+
+        time.sleep(args.delay)
+
+    # Descargar LLM de GPU
+    print("\n   Descargando LLM de GPU...")
+    llm.unload()
+    del llm
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    print("   ✔ GPU liberada")
+    print()
+
+    # Filtrar entradas con error de LLM
+    entries_for_judge = [e for e in entries if not e.get("_llm_error")]
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FASE 2 — Juicio (Judge en GPU)
+    # ═══════════════════════════════════════════════════════════════════════
+    print("━" * 62)
+    print("  FASE 2: Juicio con Llama Guard (GPU)")
+    print("━" * 62)
+    print(f"   Cargando {config.JUDGE_MODEL}...")
+    judge = JudgeLlamaGuard()
+    print(f"   ✔ Judge cargado en GPU")
+    print()
+
+    for entry in tqdm(entries_for_judge, desc="[Judge] Evaluando respuestas"):
+        try:
+            entry["judge_sin_compresion"] = judge.evaluate(
+                entry["prompt_original"], entry["response_sin_compresion"]
+            )
+            entry["judge_con_compresion"] = judge.evaluate(
+                entry["prompt_comprimido"], entry["response_con_compresion"]
+            )
+        except Exception as e:
+            errors.append({
+                "dataset": entry["dataset"],
+                "compression_rate": entry["compression_rate"],
+                "id": entry["id"],
+                "phase": "judge",
+                "error": str(e),
+            })
+            tqdm.write(f"   ⚠ Error Judge {entry['id']}: {e}")
+            entry["_judge_error"] = True
+
+        time.sleep(args.delay)
+
+    # Descargar Judge de GPU
+    print("\n   Descargando Judge de GPU...")
+    judge.unload()
+    del judge
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    print("   ✔ GPU liberada")
+    print()
+
+    # Solo resultados completos van a métricas
+    results = [
+        e for e in entries
+        if not e.get("_llm_error") and not e.get("_judge_error")
+    ]
+
+    # Limpiar flags internos
+    for r in results:
+        r.pop("_llm_error", None)
+        r.pop("_judge_error", None)
+    # ═══════════════════════════════════════════════════════════════════════
+    # FASE 3 — Métricas y Reporte
+    # ═══════════════════════════════════════════════════════════════════════
+    print("━" * 62)
+    print("  FASE 3: Métricas y Reporte")
+    print("━" * 62)
     summary = compute_metrics(results) if results else {}
     by_dataset = compute_grouped_metrics(results, "dataset")
     by_dataset_rate = compute_grouped_metrics(results, ["dataset", "compression_rate"])
@@ -253,6 +355,7 @@ def run_experiment(args):
             "llm_model": config.LLM_MODEL,
             "judge_model": config.JUDGE_MODEL,
             "compressor_model": config.COMPRESSOR_MODEL,
+            "quantize_4bit": config.QUANTIZE_4BIT,
             "compression_rate": config.COMPRESSION_RATE,
             "compression_rates": args.rates,
             "datasets": args.datasets,

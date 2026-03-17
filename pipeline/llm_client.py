@@ -1,12 +1,24 @@
 """
 Cliente LLM con dos modos:
-- local: ejecuta modelos de Hugging Face en la máquina
+- local: ejecuta modelos de Hugging Face en la máquina (con INT4 opcional)
 - api: usa endpoint compatible OpenAI
 """
+import gc
 import time
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from pipeline import config
+
+
+def _build_bnb_config():
+    """Crea BitsAndBytesConfig para cuantización INT4."""
+    from transformers import BitsAndBytesConfig
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+    )
 
 
 class LLMClient:
@@ -24,13 +36,35 @@ class LLMClient:
                 base_url=config.API_BASE_URL,
             )
         else:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model)
-            torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-            self.local_model = AutoModelForCausalLM.from_pretrained(
-                self.model,
-                torch_dtype=torch_dtype,
-                device_map="auto",
+            self._load_local()
+
+    def _load_local(self):
+        """Carga modelo local con cuantización INT4 si está configurado."""
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model)
+        load_kwargs = {"device_map": "auto"}
+
+        if config.QUANTIZE_4BIT and torch.cuda.is_available():
+            load_kwargs["quantization_config"] = _build_bnb_config()
+        else:
+            load_kwargs["torch_dtype"] = (
+                torch.float16 if torch.cuda.is_available() else torch.float32
             )
+
+        self.local_model = AutoModelForCausalLM.from_pretrained(
+            self.model, **load_kwargs
+        )
+
+    def unload(self):
+        """Libera el modelo de GPU/RAM para permitir cargar otro."""
+        if self.local_model is not None:
+            del self.local_model
+            self.local_model = None
+        if self.tokenizer is not None:
+            del self.tokenizer
+            self.tokenizer = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def generate(self, prompt: str, max_tokens: int = 512) -> dict:
         """Envía un prompt al LLM y devuelve respuesta + metadatos."""

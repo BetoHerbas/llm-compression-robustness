@@ -1,5 +1,14 @@
 # Pipeline de Tesis: Compresión de Prompts y Seguridad en LLMs
 
+## Modelos Utilizados
+
+| Rol | Modelo | Parámetros | Cuantización |
+|-----|--------|------------|--------------|
+| **Modelo objetivo (víctima)** | `meta-llama/Llama-3.1-8B-Instruct` | 8B | INT4 (nf4) |
+| **Judge principal** | `meta-llama/Llama-Guard-3-8B` | 8B | INT4 (nf4) |
+| **Compresor** | `microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank` | 178M | FP32 (CPU) |
+| **Detector opcional** | `meta-llama/Prompt-Guard-86M` | 86M | FP32 (CPU) |
+
 ## Objetivo General
 
 Este proyecto implementa un pipeline experimental para estudiar cómo la compresión de prompts afecta la seguridad de modelos de lenguaje grandes (LLMs), con foco en ataques de prompt injection y jailbreak.

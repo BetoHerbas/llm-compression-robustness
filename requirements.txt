@@ -7,3 +7,4 @@ torch
 tqdm
 accelerate
 sentencepiece
+bitsandbytes>=0.43.0
