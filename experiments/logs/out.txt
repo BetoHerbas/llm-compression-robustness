@@ -1,0 +1,2 @@
+bash: /home/beto/miniforge3/bin/conda: No such file or directory
+conda failed

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jailbreak Compression - Thesis Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <header class="dashboard-header">
+            <div class="logo-area">
+                <h1>Jailbreak <span>Compression Analysis</span></h1>
+                <p>Tesis de Grado: Impacto de LLMLingua-2 en la evasión de Llama Guard</p>
+            </div>
+            <div class="controls">
+                <select id="model-filter" class="custom-select">
+                    <option value="all">Todos los Modelos</option>
+                </select>
+                <select id="template-filter" class="custom-select">
+                    <option value="all">Todos los Templates</option>
+                </select>
+                <select id="compressor-filter" class="custom-select">
+                    <option value="all">Todos los Compresores</option>
+                </select>
+            </div>
+        </header>
+
+        <main class="dashboard-content">
+            <!-- Row 1: Summary Cards -->
+            <section class="summary-cards">
+                <div class="card stat-card">
+                    <h3>Total Trials</h3>
+                    <div class="value" id="total-trials">-</div>
+                </div>
+                <div class="card stat-card">
+                    <h3>Avg ASR (Original)</h3>
+                    <div class="value text-safe" id="avg-asr-original">-%</div>
+                </div>
+                <div class="card stat-card">
+                    <h3>Avg ASR (Comprimido)</h3>
+                    <div class="value text-danger" id="avg-asr-compressed">-%</div>
+                </div>
+                <div class="card stat-card">
+                    <h3>Avg Compression Ratio</h3>
+                    <div class="value text-accent" id="avg-ratio">-%</div>
+                </div>
+            </section>
+
+            <!-- Row 2: Main Charts -->
+            <section class="chart-grid">
+                <div class="card chart-card full-width">
+                    <div class="card-header">
+                        <h2>ASR vs Compression Rate</h2>
+                        <span class="badge">Critical Metric</span>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="asr-chart"></canvas>
+                    </div>
+                </div>
+
+                <div class="card chart-card">
+                    <div class="card-header">
+                        <h2>Latency Analysis</h2>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="latency-chart"></canvas>
+                    </div>
+                </div>
+
+                <div class="card chart-card">
+                    <div class="card-header">
+                        <h2>Evasion Efficiency</h2>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="evasion-chart"></canvas>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>

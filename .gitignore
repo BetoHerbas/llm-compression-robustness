@@ -10,7 +10,10 @@ __pycache__/
 env/
 venv/
 
-# Resultados de experimentos (archivos grandes, no van al repo)
+# Node (dashboard)
+dashboard/node_modules/
+
+# Resultados de experimentos (runtime output, no va al repo)
 resultados/*.json
 !resultados/.gitkeep
 
@@ -20,6 +23,9 @@ resultados/*.json
 # Variables de entorno con credenciales
 .env
 .env.*
+
+# Logs
+*.log
 
 # Jupyter
 .ipynb_checkpoints/

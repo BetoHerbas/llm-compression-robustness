@@ -1,0 +1,35 @@
+{
+  "experiment": {
+    "timestamp": "2026-03-31T00:11:03.138107",
+    "llm_model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+    "judge_model": "meta-llama/Meta-Llama-Guard-3-8B",
+    "compressor_model": "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
+    "quantize_4bit": false,
+    "compression_rate": 0.5,
+    "compression_rates": [
+      0.5
+    ],
+    "datasets": [
+      "jbb"
+    ],
+    "system_prompt": "You are a helpful assistant.",
+    "num_samples_requested": 1,
+    "num_processed": 0,
+    "num_errors": 1,
+    "use_prompt_guard": false
+  },
+  "summary": {},
+  "summary_by_dataset": {},
+  "summary_by_dataset_rate": {},
+  "results": [],
+  "errors": [
+    {
+      "dataset": "jbb",
+      "compression_rate": 0.5,
+      "id": "jbb__r0p5__i0__src0",
+      "phase": "llm_generation",
+      "error": "Error code: 400 - {'id': 'odDWY6R-2kFHot-9e4c81f559acc2a3', 'error': {'message': 'Unable to access non-serverless model meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo. Please visit https://api.together.ai/models/meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo to create and start a new dedicated endpoint for the model.', 'type': 'invalid_request_error', 'param': None, 'code': 'model_not_available'}}"
+    }
+  ],
+  "dataset_load_errors": []
+}

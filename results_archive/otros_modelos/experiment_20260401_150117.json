@@ -1,0 +1,17 @@
+{
+  "experiment": {
+    "timestamp": "2026-04-01T15:01:17.466497",
+    "llm_model": "/home/ubuntu/tesis_experiments/models/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf",
+    "judge_model": "/home/ubuntu/tesis_experiments/models/Llama-Guard-3-8B.Q4_K_M.gguf",
+    "template": "raw",
+    "rates": [
+      1.0,
+      0.8,
+      0.6,
+      0.4,
+      0.2
+    ]
+  },
+  "summary": {},
+  "results": []
+}

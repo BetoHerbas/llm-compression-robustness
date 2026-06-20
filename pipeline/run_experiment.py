@@ -59,31 +59,92 @@ from pipeline.metrics import compute_metrics, compute_grouped_metrics
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 def init_compressor():
-    """Inicializa LLMLingua-2 en CPU (no consume VRAM)."""
-    print("   Cargando LLMLingua-2...")
-    compressor = PromptCompressor(
-        model_name=config.COMPRESSOR_MODEL,
-        use_llmlingua2=True,
-        device_map="cpu",
-    )
-    print("   ✔ LLMLingua-2 listo")
-    return compressor
+    """Inicializa el compresor en CPU."""
+    is_llmlingua2 = (config.COMPRESSOR_TYPE.lower() == "llmlingua2")
+    is_abstractive = (config.COMPRESSOR_TYPE.lower() == "abstractive")
+    
+    if is_abstractive:
+        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+        # El compresor abstractivo requiere un modelo Seq2Seq (T5/BART).
+        # Si COMPRESSOR_MODEL apunta al modelo BERT de llmlingua2, usamos BART por defecto.
+        abstractive_model = config.COMPRESSOR_MODEL
+        if "llmlingua" in abstractive_model.lower() or "bert" in abstractive_model.lower():
+            abstractive_model = "facebook/bart-large-cnn"
+        print(f"   Cargando Compresor (Abstractivo) con modelo {abstractive_model}...")
+        tokenizer = AutoTokenizer.from_pretrained(abstractive_model)
+        model = AutoModelForSeq2SeqLM.from_pretrained(abstractive_model)
+        model.eval()
+        print("   ✔ Compresor listo")
+        return {"tokenizer": tokenizer, "model": model}
+
+    else:
+        comp_name = "LLMLingua-2" if is_llmlingua2 else "LLMLingua-Perplexity"
+        print(f"   Cargando Compresor ({comp_name}) con modelo {config.COMPRESSOR_MODEL}...")
+        compressor = PromptCompressor(
+            model_name=config.COMPRESSOR_MODEL,
+            use_llmlingua2=is_llmlingua2,
+            device_map="cpu",
+        )
+        print("   ✔ Compresor listo")
+        return compressor
 
 
 def compress_prompt(compressor, text: str, rate: float) -> dict:
     """Comprime un prompt y devuelve resultado + timing."""
     start = time.time()
-    result = compressor.compress_prompt_llmlingua2(
-        text,
-        rate=rate,
-        force_tokens=config.FORCE_TOKENS,
-    )
+    is_llmlingua2 = (config.COMPRESSOR_TYPE.lower() == "llmlingua2")
+    is_abstractive = (config.COMPRESSOR_TYPE.lower() == "abstractive")
+    
+    if is_abstractive:
+        estimated_tokens = len(text.split()) * 1.3
+        target_tokens = max(10, int(estimated_tokens * rate))
+        
+        if estimated_tokens < 20:
+            res_text = text
+        else:
+            try:
+                tokenizer = compressor["tokenizer"]
+                model = compressor["model"]
+                inputs = tokenizer(text, return_tensors="pt", max_length=1024, truncation=True)
+                summary_ids = model.generate(
+                    inputs["input_ids"], 
+                    max_new_tokens=int(target_tokens), 
+                    min_length=max(5, int(target_tokens//2)), 
+                    do_sample=False
+                )
+                res_text = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+            except Exception as e:
+                res_text = text[:int(len(text)*rate)]
+                
+        orig_t = len(text.split())
+        comp_t = len(res_text.split())
+        final_ratio = comp_t / max(1, orig_t)
+        result = {
+            "compressed_prompt": res_text,
+            "origin_tokens": orig_t,
+            "compressed_tokens": comp_t
+        }
+    elif is_llmlingua2:
+        result = compressor.compress_prompt_llmlingua2(
+            text,
+            rate=rate,
+            force_tokens=config.FORCE_TOKENS,
+        )
+        final_ratio = result.get("rate", rate)
+    else:
+        result = compressor.compress_prompt(
+            [text],
+            rate=rate,
+            force_tokens=config.FORCE_TOKENS,
+        )
+        final_ratio = result.get("rate", rate)
+
     latency = time.time() - start
     return {
         "compressed_prompt": result["compressed_prompt"],
         "tokens_original": result["origin_tokens"],
         "tokens_compressed": result["compressed_tokens"],
-        "ratio": result["rate"],
+        "ratio": final_ratio,
         "latency": latency,
     }
 
@@ -115,6 +176,7 @@ def run_experiment(args):
     print(f"   Backend:         {config.BACKEND}")
     print(f"   Modelo LLM:      {config.LLM_MODEL}")
     print(f"   Modelo Judge:    {config.JUDGE_MODEL}")
+    print(f"   Template:        {config.TEMPLATE}")
     print(f"   Cuantización:    {'INT4' if config.QUANTIZE_4BIT else 'FP16'}")
     print(f"   Rates:           {', '.join(str(r) for r in args.rates)}")
     print(f"   Datasets:        {', '.join(args.datasets)}")
@@ -175,7 +237,11 @@ def run_experiment(args):
             for i in tqdm(range(n), desc=desc):
                 item = ds[i]
                 prompt_field = spec["prompt_field"]
-                prompt_original = item[prompt_field]
+                raw_prompt = item[prompt_field]
+                
+                # Envolver en el Jailbreak Template configurado
+                template_text = config.JAILBREAK_TEMPLATES.get(config.TEMPLATE, "{prompt}")
+                prompt_original = template_text.replace("{prompt}", raw_prompt)
 
                 idx_field = spec["id_field"]
                 cat_field = spec["category_field"]
@@ -354,7 +420,9 @@ def run_experiment(args):
             "timestamp": datetime.now().isoformat(),
             "llm_model": config.LLM_MODEL,
             "judge_model": config.JUDGE_MODEL,
+            "template": config.TEMPLATE,
             "compressor_model": config.COMPRESSOR_MODEL,
+            "compressor_type": config.COMPRESSOR_TYPE,
             "quantize_4bit": config.QUANTIZE_4BIT,
             "compression_rate": config.COMPRESSION_RATE,
             "compression_rates": args.rates,
@@ -427,10 +495,10 @@ def main():
     )
     parser.add_argument(
         "--profile",
-        choices=["pilot", "lab"],
+        choices=["pilot", "lab", "laptop", "server"],
         default=config.PROFILE.lower(),
         help=(
-            "Perfil de ejecución: pilot (laptop) o lab (final). "
+            "Perfil de ejecución: pilot (laptop), lab (final) o server (Ollama). "
             f"Default: {config.PROFILE.lower()}"
         ),
     )
@@ -439,6 +507,12 @@ def main():
         choices=["local", "api"],
         default=None,
         help="Backend para inferencia: local (Transformers) o api (OpenAI-compatible)",
+    )
+    parser.add_argument(
+        "--template",
+        type=str,
+        default=None,
+        help=f"Jailbreak template to use. Default: {config.TEMPLATE}",
     )
     parser.add_argument(
         "--num-samples", type=int, default=None,
@@ -473,6 +547,11 @@ def main():
         config.BACKEND = args.backend
     else:
         config.BACKEND = selected["BACKEND"].lower()
+
+    if args.template is not None:
+        config.TEMPLATE = args.template
+    else:
+        config.TEMPLATE = selected.get("TEMPLATE", "raw")
 
     if args.num_samples is None:
         args.num_samples = selected["NUM_SAMPLES"]
