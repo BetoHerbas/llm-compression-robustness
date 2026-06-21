@@ -1,6 +1,6 @@
 # Safety-Efficiency Trade-offs: Evaluating the Impact of Prompt Compression on LLM Robustness Against Adversarial Attacks
 
-> **IEEE Conference Paper** — Companion repository with the full experimental pipeline, raw results, and figure generation scripts.
+> **JCC** — Companion repository with the full experimental pipeline, raw results, and figure generation scripts.
 
 ## Models Used
 
