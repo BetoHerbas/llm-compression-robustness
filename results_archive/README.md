@@ -1,22 +1,20 @@
-# Resultados Archivados — Experimentos Adicionales
+# Archived Results — Supplementary Experiments
 
-Contiene experimentos que **no forman parte directa del paper** pero se preservan
-como evidencia del proceso de investigación.
+Contains experiments that **are not directly part of the paper** but are preserved
+as evidence of the research process.
 
-## Contenido
+## Contents
 
 ```
 results_archive/
-├── resultados_server/      # Versiones tempranas de llama4:scout en servidor
-│                           # (1000 muestras vs 1200 en results_final/)
-├── perplexity/             # Compresor basado en Perplexity (GPT-2)
-│                           # No usado en paper por límite de contexto (1024 tokens)
-└── otros_modelos/          # Pruebas piloto con modelos más pequeños:
-    ├── Meta-Llama-3-8B-Instruct (API Together)
+├── resultados_server/      # Early versions of llama4:scout on server
+│                           # (1000 samples vs 1200 in results_final/)
+└── otros_modelos/          # Pilot experiments with smaller models:
+    ├── Meta-Llama-3-8B-Instruct (Together API)
     ├── Mistral-7B-Instruct-v0.1
     ├── Qwen2.5-0.5B-Instruct / 7B-Instruct
-    ├── Meta-Llama-3.1-8B-Instruct GGUF (servidor)
-    └── llama4:scout (1000 muestras, temprano)
+    ├── Meta-Llama-3.1-8B-Instruct GGUF (server)
+    └── llama4:scout (1000 samples, early run)
 ```
 
-Los resultados finales del paper están en `../results_final/`.
+The final paper results are in `../results_final/`.

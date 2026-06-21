@@ -108,8 +108,8 @@ def compress_prompt(compressor, text: str, rate: float) -> dict:
                 inputs = tokenizer(text, return_tensors="pt", max_length=1024, truncation=True)
                 summary_ids = model.generate(
                     inputs["input_ids"], 
-                    max_new_tokens=int(target_tokens), 
-                    min_length=max(5, int(target_tokens//2)), 
+                    max_new_tokens=int(target_tokens * 1.1), 
+                    min_length=max(5, int(target_tokens * 0.9)), 
                     do_sample=False
                 )
                 res_text = tokenizer.decode(summary_ids[0], skip_special_tokens=True)

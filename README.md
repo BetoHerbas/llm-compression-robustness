@@ -1,42 +1,37 @@
-# Thesis Pipeline: Prompt Compression and Security in LLMs
+# Safety-Efficiency Trade-offs: Evaluating the Impact of Prompt Compression on LLM Robustness Against Adversarial Attacks
+
+> **IEEE Conference Paper** — Companion repository with the full experimental pipeline, raw results, and figure generation scripts.
 
 ## Models Used
 
 | Role | Model | Parameters | Quantization |
-|------|-------|-----------|--------------|
-| **Target model (victim)** | `meta-llama/Llama-3.1-8B-Instruct` | 8B | INT4 (nf4) |
-| **Primary Judge** | `meta-llama/Llama-Guard-3-8B` | 8B | INT4 (nf4) |
-| **Compressor** | `microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank` | 178M | FP32 (CPU) |
-| **Optional Detector** | `meta-llama/Prompt-Guard-86M` | 86M | FP32 (CPU) |
+|------|-------|-----------:|:------------:|
+| **Target LLM (victim)** | Meta-Llama-4-Scout | 109B (Sparse MoE) | Q4_K_M (GGUF) |
+| **Target LLM (victim)** | Qwen-1.5-110B-Chat | 110B (Dense) | Q4_K_M (GGUF) |
+| **Target LLM (victim)** | Gemma-2-27B-it | 27B (Dense) | Q4_K_M (GGUF) |
+| **Primary Judge** | Llama-Guard-3-8B | 8B | Q4_K_M (GGUF) |
+| **Extractive Compressor** | LLMLingua-2 (BERT-based) | 178M | FP32 (CPU) |
+| **Abstractive Compressor** | BART-large-cnn | 406M | FP32 (CPU) |
+| **Optional Detector** | Prompt-Guard-86M | 86M | FP32 (CPU) |
 
 ## Research Objective
 
-This project implements an experimental pipeline to study how prompt compression affects the safety of Large Language Models (LLMs), focusing on prompt injection and jailbreak attacks.
+This project implements an automated, end-to-end experimental pipeline to study how **extractive** (LLMLingua-2) and **abstractive** (BART) prompt compression affect the safety alignment of frontier Large Language Models (LLMs) against jailbreak attacks.
 
-The central thesis evaluates whether a prompt compression technique — **LLMLingua-2** — can alter a target model's behavior so that malicious attacks become:
-1. More successful.
-2. Harder to detect.
-3. Cheaper in tokens and latency.
-
-The guiding hypothesis is that **compression does not necessarily act as a defense**, and in certain scenarios it can degrade system safety by preserving malicious intent while altering the linguistic signals that help reject the attack.
+Key findings:
+- **Extractive Vulnerability Spike**: Moderate extractive compression (LLMLingua-2) can *amplify* attacks by stripping low-entropy safety preambles while preserving high-entropy adversarial payloads.
+- **Abstractive Neutralization Effect**: Abstractive compression (BART) systematically *neutralizes* attacks by collapsing adversarial camouflage into raw intent, triggering native safety filters.
+- **Model-Dependent Heterogeneity**: Adversarial resilience is determined by the interaction between compression method, compression level, and the specific model's safety profile — not by architecture type (Dense vs. MoE).
 
 ## Research Question
 
-> Does prompt compression increase the Attack Success Rate (ASR) of jailbreak or prompt injection attacks on an LLM, compared to using the original uncompressed prompt?
-
-## Working Hypothesis
-
-> Given a set of malicious prompts, the compressed version can produce a higher **Attack Success Rate (ASR)** than the original, especially at more aggressive compression levels.
-
-Formally:
-- $H_0$: $ASR_{compressed} \le ASR_{uncompressed}$
-- $H_1$: $ASR_{compressed} > ASR_{uncompressed}$
+> How does standard, unmodified prompt compression natively interact with the alignment of frontier-scale LLMs under standardized adversarial benchmarking?
 
 ## What This Pipeline Does
 
 For each attack, the pipeline compares two conditions:
 1. The original prompt, uncompressed.
-2. The same prompt after compression with LLMLingua-2 (or BART for abstractive mode).
+2. The same prompt after compression with LLMLingua-2 (extractive) or BART (abstractive).
 
 Both versions are sent to the target model, then an automated judge classifies each response as `safe` or `unsafe`. Metrics such as ASR, latency, tokens, and paired statistical tests are computed.
 
@@ -91,6 +86,7 @@ Two compression paradigms are supported:
 - **Abstractive (BART-large-cnn)**: Sequence-to-sequence summarization that generates a condensed version.
   - Model: `facebook/bart-large-cnn`
   - Implementation: [pipeline/run_experiment.py](pipeline/run_experiment.py)
+  - Activated via: `export COMPRESSOR_TYPE=abstractive`
 
 ### 2. Target Model
 
@@ -157,8 +153,8 @@ The system computes:
 │   └── fix_results.py             # Post-processing corrections
 ├── paper/                         # Paper source (LaTeX + figures)
 │   ├── main.tex
-│   ├── CompressionAttack.pdf
-│   └── generate_figures.py
+│   ├── generate_figures.py
+│   └── fig*.pdf / fig*.png        # Generated figures
 ├── results_final/                 # Paper results, organized by compressor
 │   ├── llmlingua2/                #   Extractive compression (LLMLingua-2)
 │   │   ├── llama4_scout/
@@ -171,19 +167,14 @@ The system computes:
 │   └── README.md
 ├── results_archive/               # Archived supplementary experiments
 │   ├── resultados_server/         #   Early server runs
-│   ├── perplexity/                #   Perplexity-based compressor tests
 │   ├── otros_modelos/             #   Pilot experiments (smaller models)
 │   └── README.md
 ├── dashboard/                     # Interactive visualization dashboard
-├── experiments/                   # Run scripts and configuration
-│   ├── scripts/                   #   Experiment launch scripts
-│   ├── setup/                     #   Dependency installation
-│   ├── archive_scripts/           #   Early test scripts
-│   └── logs/                      #   Execution logs
-├── resultados/                    # Active pipeline output (gitignored)
-└── docs/                          # Supporting documentation (Spanish)
-    ├── contexto_tesis.md
-    └── analisis_cientifico.md
+└── experiments/                   # Run scripts and configuration
+    ├── scripts/                   #   Experiment launch scripts
+    ├── setup/                     #   Dependency installation
+    ├── archive_scripts/           #   Early test scripts
+    └── logs/                      #   Execution logs
 ```
 
 ## Configuration
@@ -205,15 +196,26 @@ Central configuration: [pipeline/config.py](pipeline/config.py)
 ### Datasets
 
 Defined in `DATASET_REGISTRY` in [pipeline/config.py](pipeline/config.py):
-1. `jbb` — JailbreakBench/JBB-Behaviors
-2. `advbench` — walledai/AdvBench
-3. `securitylingua`
-4. `compressionattack`
-5. `partprompt`
+1. `jbb` — JailbreakBench/JBB-Behaviors (115 harmful intents)
+2. `advbench` — walledai/AdvBench (adversarial templates)
 
 ### Compression Rates
 
 The pipeline supports rate sweeping: `0.9, 0.7, 0.5, 0.3, 0.1`.
+
+### Switching Compressor Type
+
+The compressor paradigm is controlled by the `COMPRESSOR_TYPE` environment variable:
+
+```bash
+# Extractive compression (default)
+export COMPRESSOR_TYPE=llmlingua2
+
+# Abstractive compression
+export COMPRESSOR_TYPE=abstractive
+```
+
+When `COMPRESSOR_TYPE=abstractive`, the pipeline automatically uses `facebook/bart-large-cnn` regardless of the `COMPRESSOR_MODEL` setting.
 
 ## Requirements
 
@@ -246,36 +248,38 @@ python pipeline/run_experiment.py \
   --profile pilot \
   --backend local \
   --datasets jbb \
-  --rates 0.9,0.7,0.5,0.3 \
+  --rates 0.9,0.7,0.5,0.3,0.1 \
   --num-samples 10 \
   --no-prompt-guard \
   --delay 0.0
 ```
 
-### Full lab experiment
+### Full server experiment (extractive)
 
 ```bash
 conda activate tesis
-python pipeline/run_experiment.py \
-  --profile lab \
-  --backend local \
-  --datasets jbb,advbench \
-  --rates 0.9,0.7,0.5,0.3 \
-  --num-samples 100 \
-  --use-prompt-guard \
-  --delay 0.3
-```
-
-### Server run (Ollama)
-
-```bash
-conda activate tesis
+export COMPRESSOR_TYPE=llmlingua2
 python pipeline/run_experiment.py \
   --profile server \
   --backend api \
-  --datasets jbb \
+  --datasets jbb,advbench \
   --rates 0.9,0.7,0.5,0.3,0.1 \
-  --num-samples 100
+  --num-samples 100 \
+  --template dan
+```
+
+### Full server experiment (abstractive)
+
+```bash
+conda activate tesis
+export COMPRESSOR_TYPE=abstractive
+python pipeline/run_experiment.py \
+  --profile server \
+  --backend api \
+  --datasets jbb,advbench \
+  --rates 0.9,0.7,0.5,0.3,0.1 \
+  --num-samples 100 \
+  --template dan
 ```
 
 ## CLI Arguments
@@ -294,7 +298,7 @@ python pipeline/run_experiment.py \
 
 ## Output Format
 
-Each run produces a JSON file in `resultados/` with the following sections:
+Each run produces a JSON file with the following sections:
 
 ### `experiment`
 Run metadata: timestamp, LLM model, judge model, compressor, datasets, rates, sample count.
@@ -322,7 +326,7 @@ $$\Delta ASR = ASR_{compressed} - ASR_{uncompressed}$$
 If $\Delta ASR > 0$, compression made the attack more successful.
 
 ### McNemar p-value
-Exact paired binomial test comparing responses on the same prompt under two conditions.
+Exact paired binomial test comparing responses on the same prompt under two conditions. Bonferroni-corrected threshold: $\alpha_{adj} = 0.0016$.
 
 ## Organized Results
 
@@ -339,19 +343,14 @@ Experimental results are in `results_final/`, organized by compression paradigm 
 
 **Total: 24 files** (~1200 samples each, evaluated with Llama-Guard-3-8B).
 
-Supplementary experiments (pilots, perplexity, early runs) are archived in `results_archive/`.
-
-## Additional Documentation
-
-- [`docs/contexto_tesis.md`](docs/contexto_tesis.md) — Full research context (Spanish)
-- [`docs/analisis_cientifico.md`](docs/analisis_cientifico.md) — Detailed scientific analysis (Spanish)
+Supplementary experiments (pilots, early runs) are archived in `results_archive/`.
 
 ## Current Limitations
 
 1. Some dataset aliases may require adjusting the Hugging Face identifier.
 2. The local judge is a practical approximation; for definitive results, use a stronger judge or human validation.
 3. The local backend requires sufficient RAM/GPU for large models.
-4. Some Llama 4 model variants are not as readily available as smaller open models.
+4. Models are served via Ollama with GGUF quantization (Q4_K_M); precision loss is a systematic constraint applied uniformly across all conditions.
 
 ## Repository Goal
 
@@ -359,4 +358,4 @@ This repository provides a reproducible experimental framework to answer a safet
 
 > Can prompt compression transform a token optimization technique into a security risk?
 
-The value of this thesis lies in demonstrating — or refuting — this hypothesis with controlled experimental evidence.
+The experimental evidence demonstrates that compression is **not semantically neutral** regarding model security, and that the impact is determined by the interaction between compression method, compression level, and the target model's safety profile.

@@ -67,7 +67,7 @@ JAILBREAK_TEMPLATES = {
 
 # ── Barrido de compresión ────────────────────────────────────────────────
 # Se interpreta como ratio de tokens objetivo de LLMLingua-2.
-COMPRESSION_RATES = [0.9, 0.6, 0.4, 0.2]
+COMPRESSION_RATES = [0.9, 0.7, 0.5, 0.3, 0.1]
 
 # ── Datasets disponibles para el pipeline ────────────────────────────────
 # Nota: algunos repos pueden requerir login en Hugging Face o variar esquema.

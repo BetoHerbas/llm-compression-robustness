@@ -15,7 +15,6 @@ dashboard/node_modules/
 
 # Resultados de experimentos (runtime output, no va al repo)
 resultados/*.json
-!resultados/.gitkeep
 
 # Hugging Face cache descargado en runtime
 .cache/
